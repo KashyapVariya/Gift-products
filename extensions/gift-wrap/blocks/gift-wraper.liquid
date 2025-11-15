@@ -1,0 +1,196 @@
+{% schema %}
+{
+  "name": "App Embed",
+  "target": "body",
+  "settings": []
+}
+{% endschema %}
+
+{% if template contains 'product' %}
+  <script>
+    window.__CURRENT_PRODUCT_TITLE__ = {{ product.title | json }};
+  </script>
+{% endif %}
+
+<script>
+  window.__SHOPIFY_TEMPLATE__ = '{{ template }}';
+</script>
+
+<script>
+  (function () {
+    const shop = '{{ shop.permanent_domain }}';
+    const template = window.__SHOPIFY_TEMPLATE__ || '';
+    const isProduct = template.includes('product');
+    const isCart = template.includes('cart');
+    const targetSelector = '#gift-wrap-container';
+    let giftWrapInserted = false;
+    const currencySymbol = '{{ shop.currency.symbol }}';
+
+    console.log('currency symbol: ', currencySymbol);
+
+    function extractNumericId(gid) {
+      const match = gid.match(/\/(\d+)$/);
+      return match ? match[1] : null;
+    }
+
+    function insertGiftWrapCheckbox(container, data, variantId) {
+      if (giftWrapInserted) return;
+      giftWrapInserted = true;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'gift-wrap-wrapper';
+
+      const optionDiv = document.createElement('div');
+      optionDiv.className = 'gift-wrap-option';
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.id = 'giftwrap_input';
+      checkbox.name = 'gift_wrap';
+      checkbox.value = 'yes';
+      checkbox.className = 'gift-wrap-checkbox';
+
+      const titleWithPrice = (data.giftTitle || 'Add a Gift Wrap to your Order').replace('${price}', data.price);
+
+      const label = document.createElement('label');
+      label.htmlFor = 'giftwrap_input';
+      label.className = 'gift-wrap-label';
+      label.innerText = titleWithPrice;
+
+      optionDiv.appendChild(checkbox);
+      optionDiv.appendChild(label);
+      wrapper.appendChild(optionDiv);
+
+      // Note input in separate div (if enabled)
+      let noteInput = null;
+      if (data.enableNotes) {
+        const noteDiv = document.createElement('div');
+        noteDiv.className = 'gift-wrap-note-container';
+
+        noteInput = document.createElement('textarea');
+        noteInput.id = 'giftwrap_text_message';
+        noteInput.placeholder = 'Gift message (optional)';
+        noteInput.className = 'gift-wrap-note';
+        noteInput.style = 'display:none; margin-top:10px; width:300px; border-radius:5px; padding:4px; height:50px;';
+
+        noteDiv.appendChild(noteInput);
+        wrapper.appendChild(noteDiv);
+      }
+
+      container.appendChild(wrapper);
+
+      checkbox.addEventListener('change', function () {
+        if (noteInput) {
+          noteInput.style.display = this.checked ? 'block' : 'none';
+        }
+      });
+
+      if (isProduct) {
+        let button = document.querySelector('button[type=submit][name=add], button[type=button][name=add]');
+        if (!button) {
+          button = document.querySelector('input[type=submit][name=add], button[type=button]');
+        }
+        if (!button) {
+          const form = document.querySelector('form[action="/cart/add"]');
+          button = form?.querySelector(':submit');
+        }
+
+        if (button) {
+          button.addEventListener('click', function (e) {
+            const isChecked = checkbox.checked;
+            if (!isChecked) return;
+
+            e.preventDefault();
+            const note = noteInput?.value || '';
+            const productTitle = window.__CURRENT_PRODUCT_TITLE__ || 'Product';
+
+            fetch('/cart/add.js', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: variantId,
+                quantity: 1,
+                properties: {
+                  ...(data.enableNotes ? { Note: note } : {}),
+                  Product: productTitle,
+                },
+              }),
+            })
+              .then(() => {
+                e.target.closest('form')?.submit();
+              })
+              .catch((err) => {
+                console.error('Failed to add giftwrap:', err);
+              });
+          });
+        }
+      }
+
+      if (isCart) {
+        const checkoutBtns = document.querySelectorAll('input[name=checkout], button[name=checkout], input#checkout');
+        checkoutBtns.forEach((btn) => {
+          btn.addEventListener('click', function (e) {
+            if (!checkbox.checked) return;
+
+            e.preventDefault();
+            const note = noteInput?.value || '';
+
+            fetch('/cart/add.js', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: variantId,
+                quantity: 1,
+                properties: {
+                  ...(data.enableNotes ? { Note: note } : {}),
+                },
+              }),
+            })
+              .then(() => {
+                window.location.href = '/checkout';
+              })
+              .catch((err) => {
+                console.error('Gift wrap add failed:', err);
+              });
+          });
+        });
+      }
+    }
+
+    function checkAndInsertGiftWrap(container) {
+      // need to update application url 
+      fetch('https://thunder-blue-ethiopia-trackbacks.trycloudflare.com/api/giftwrap?shop=' + shop)
+        .then((response) => response.json())
+        .then((data) => {
+          if (data?.isEnabled && data?.product?.variantId) {
+            const variantId = extractNumericId(data.product.variantId);
+            const displayOption = data.displayOption || 'both';
+
+            const shouldShow =
+              displayOption === 'both' ||
+              (displayOption === 'product' && isProduct) ||
+              (displayOption === 'cart' && isCart);
+
+            if (shouldShow) {
+              insertGiftWrapCheckbox(container, data, variantId);
+            }
+          }
+        })
+        .catch((error) => console.error('Gift wrap fetch failed:', error));
+    }
+
+    const observer = new MutationObserver(() => {
+      const container = document.querySelector(targetSelector);
+      if (container && !giftWrapInserted) {
+        checkAndInsertGiftWrap(container);
+      }
+    });
+
+    observer.observe(document.body, { childList: true, subtree: true });
+
+    const existing = document.querySelector(targetSelector);
+    if (existing) {
+      checkAndInsertGiftWrap(existing);
+    }
+  })();
+</script>
